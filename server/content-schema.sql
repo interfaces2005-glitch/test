@@ -1,0 +1,17 @@
+ALTER TABLE services ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
+ALTER TABLE services ADD COLUMN IF NOT EXISTS image text NOT NULL DEFAULT '';
+ALTER TABLE staff ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
+ALTER TABLE services DROP CONSTRAINT IF EXISTS services_category_check;
+UPDATE services SET is_active=false,category='extensions' WHERE category='nails';
+UPDATE services SET category=CASE WHEN id=3 THEN 'lamination' ELSE 'extensions' END WHERE category='lashes';
+ALTER TABLE services ADD CONSTRAINT services_category_check CHECK(category IN ('extensions','lamination'));
+UPDATE services SET image='/images/beauty.jpg' WHERE image='';
+INSERT INTO staff_services(staff_id,service_id) SELECT id,3 FROM staff WHERE role='Мастер маникюра' AND EXISTS(SELECT 1 FROM services WHERE id=3) ON CONFLICT DO NOTHING;
+UPDATE staff SET role='Мастер ламинирования' WHERE role='Мастер маникюра';
+UPDATE staff SET role='Мастер по ресницам' WHERE role='Ресницы и маникюр';
+DELETE FROM staff_services WHERE service_id IN (SELECT id FROM services WHERE NOT is_active);
+CREATE SEQUENCE IF NOT EXISTS services_id_seq START WITH 100;
+SELECT setval('services_id_seq',GREATEST(100,COALESCE(max(id),100)),true) FROM services;
+ALTER TABLE services ALTER COLUMN id SET DEFAULT nextval('services_id_seq');
+CREATE TABLE IF NOT EXISTS site_content(id integer PRIMARY KEY CHECK(id=1),content jsonb NOT NULL,revision integer NOT NULL DEFAULT 0,updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS media(id uuid PRIMARY KEY,mime text NOT NULL CHECK(mime IN ('image/jpeg','image/png','image/webp')),data bytea NOT NULL CHECK(octet_length(data)<=6291456),created_at timestamptz NOT NULL DEFAULT now());

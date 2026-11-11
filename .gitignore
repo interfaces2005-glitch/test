@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.*.local
+.sites/
+*.tar.gz
+test-results/
+playwright-report/
+.openai/
+.sites-checkout*/
+*.zip
