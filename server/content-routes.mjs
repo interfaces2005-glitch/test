@@ -1,6 +1,7 @@
 import express from 'express';
 import {randomUUID} from 'node:crypto';
 import {defaultSite,normalizeSite,validateService,validImage} from '../shared/site-content.mjs';
+import {isValidKgPhone} from '../shared/contact.mjs';
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status});};
 export async function getSite(pool){const row=(await pool.query('SELECT content,revision FROM site_content WHERE id=1')).rows[0];return {site:row?normalizeSite(row.content):defaultSite,siteRevision:row?.revision||0};}
 export function imageMime(bytes){
@@ -29,5 +30,5 @@ export function registerContentRoutes(app,{pool,transaction}){
  };
  app.post('/api/admin/services',saveService);app.put('/api/admin/services/:id',saveService);
  app.delete('/api/admin/services/:id',async(req,res)=>{const id=Number(req.params.id);if(!Number.isInteger(id))fail('Некорректная услуга');await transaction(async db=>{const r=await db.query('UPDATE services SET is_active=false WHERE id=$1 RETURNING id',[id]);if(!r.rowCount)fail('Услуга не найдена',404);});res.json({ok:true});});
- app.put('/api/admin/staff/:id',async(req,res)=>{const s=req.body,id=Number(req.params.id);if(!Number.isInteger(id)||typeof s.name!=='string'||!s.name.trim()||s.name.length>100||typeof s.role!=='string'||!s.role.trim()||s.role.length>150||typeof s.is_active!=='boolean')fail('Проверьте имя и специализацию мастера');serverImage(s.image||'');await transaction(async db=>{const r=await db.query('UPDATE staff SET name=$2,role=$3,image=$4,is_active=$5 WHERE id=$1 RETURNING id',[id,s.name.trim(),s.role.trim(),s.image||'',s.is_active]);if(!r.rowCount)fail('Мастер не найден',404);});res.json({ok:true});});
+ app.put('/api/admin/staff/:id',async(req,res)=>{const s=req.body,id=Number(req.params.id);if(!Number.isInteger(id)||typeof s.name!=='string'||!s.name.trim()||s.name.length>100||typeof s.role!=='string'||!s.role.trim()||s.role.length>150||typeof s.is_active!=='boolean')fail('Проверьте имя и специализацию мастера');if((s.whatsapp&&!isValidKgPhone(s.whatsapp))||(s.whatsappOptIn&&!isValidKgPhone(s.whatsapp)))fail('Проверьте номер WhatsApp мастера');serverImage(s.image||'');await transaction(async db=>{const r=await db.query('UPDATE staff SET name=$2,role=$3,image=$4,is_active=$5,whatsapp_phone=$6,whatsapp_opt_in=$7 WHERE id=$1 RETURNING id',[id,s.name.trim(),s.role.trim(),s.image||'',s.is_active,s.whatsapp||'',!!s.whatsappOptIn]);if(!r.rowCount)fail('Мастер не найден',404);});res.json({ok:true});});
 }

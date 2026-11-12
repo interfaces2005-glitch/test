@@ -1,4 +1,6 @@
 import express from 'express';
+import {registerPublicBooking,registerPaymentAdmin,expirePendingPayments} from './booking-routes.mjs';
+import {toApp} from './appointment-record.mjs';
 import {getSite,registerContentRoutes} from './content-routes.mjs';
 import {isValidKgPhone,STUDIO_TIMEZONE} from '../shared/contact.mjs';
 import helmet from 'helmet';
@@ -9,7 +11,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {totalFor,minuteLabel} from '../shared/catalog.mjs';
 import {HOLD_SECONDS,validateSelection,validateSchedule,calculateSlots,localNow,studioInstant} from './domain.mjs';
-import {startNotifications,enqueue} from './notifications.mjs';
+import {startNotifications,enqueue,whatsappReady} from './notifications.mjs';
 
 pg.types.setTypeParser(1082,value=>value);
 const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:15});
@@ -19,15 +21,15 @@ if(!process.env.DATABASE_URL||!process.env.REDIS_URL||!process.env.ADMIN_PASSWOR
 await redis.connect();await pool.query('SELECT 1');
 const hash=s=>createHash('sha256').update(String(s)).digest('hex');const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status});};
 const validId=id=>{if(!/^[0-9a-f-]{36}$/i.test(id||''))fail('Некорректный идентификатор');return id;};
-const app=express();app.set('trust proxy','loopback');app.disable('x-powered-by');app.use(helmet({contentSecurityPolicy:{directives:{defaultSrc:["'self'"],scriptSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'",'https://fonts.googleapis.com'],fontSrc:["'self'",'https://fonts.gstatic.com'],imgSrc:["'self'",'data:'],frameSrc:['https://maps.google.com'],connectSrc:["'self'"]}},crossOriginEmbedderPolicy:false}));
+const app=express();app.set('trust proxy','loopback');app.disable('x-powered-by');app.use(helmet({contentSecurityPolicy:{directives:{defaultSrc:["'self'"],scriptSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'",'https://fonts.googleapis.com'],fontSrc:["'self'",'https://fonts.gstatic.com'],imgSrc:["'self'",'data:','blob:'],frameSrc:['https://maps.google.com'],connectSrc:["'self'"]}},crossOriginEmbedderPolicy:false}));
 app.use(express.json({limit:'256kb'}));
 app.use('/api',async(req,res,next)=>{try{
  if(!['GET','HEAD','OPTIONS'].includes(req.method)&&req.get('origin')!==origin)fail('Недопустимый источник запроса',403);
  const key='rate:'+hash(req.ip)+':'+Math.floor(Date.now()/60000);const n=await redis.incr(key);if(n===1)await redis.expire(key,65);if(n>240)fail('Слишком много запросов. Повторите через минуту.',429);next();
 }catch(e){next(e);}});
-const toApp=a=>({id:a.id,staffId:a.staff_id,date:typeof a.date==='string'?a.date:a.date.toISOString().slice(0,10),start:a.start,end:a.end,serviceIds:a.service_ids,titles:a.titles,price:Number(a.price),status:a.status,expiresAt:a.expires_at?new Date(a.expires_at).getTime():null,name:a.name,phone:a.phone,comment:a.comment});
+
 const scheduleRow=s=>({date:s.date,staffId:s.staff_id,start:s.start,end:s.end,off:s.off,breaks:s.breaks});
-async function catalog(db=pool,includeInactiveStaff=false){const services=(await db.query('SELECT * FROM services WHERE is_active ORDER BY id')).rows;const staff=(await db.query('SELECT s.*,COALESCE(array_agg(ss.service_id) FILTER(WHERE ss.service_id IS NOT NULL),ARRAY[]::integer[]) AS "serviceIds" FROM staff s LEFT JOIN staff_services ss ON s.id=ss.staff_id WHERE ($1 OR s.is_active) GROUP BY s.id ORDER BY s.id',[includeInactiveStaff])).rows;return {services:services.map(s=>({...s,price:Number(s.price)})),staff};}
+async function catalog(db=pool,includeInactiveStaff=false){const services=(await db.query('SELECT * FROM services WHERE is_active ORDER BY id')).rows;const staff=(await db.query('SELECT s.*,COALESCE(array_agg(ss.service_id) FILTER(WHERE ss.service_id IS NOT NULL),ARRAY[]::integer[]) AS "serviceIds" FROM staff s LEFT JOIN staff_services ss ON s.id=ss.staff_id WHERE ($1 OR s.is_active) GROUP BY s.id ORDER BY s.id',[includeInactiveStaff])).rows;return {services:services.map(s=>({...s,price:Number(s.price)})),staff:staff.map(({whatsapp_phone,whatsapp_opt_in,...m})=>({...m,...(includeInactiveStaff?{whatsapp:whatsapp_phone,whatsappOptIn:whatsapp_opt_in}:{})}))};}
 async function getSlots(query,db=pool){validateSelection(query);const cat=await catalog(db);const schedules=(await db.query('SELECT * FROM schedules WHERE date=$1',[query.date])).rows.map(scheduleRow);const appointments=(await db.query('SELECT * FROM appointments WHERE date=$1 AND status NOT IN (\'cancelled\',\'expired\')',[query.date])).rows.map(toApp);return calculateSlots({catalog:cat,schedules,appointments,query,now:localNow(zone)});}
 async function transaction(fn){const db=await pool.connect();try{await db.query('BEGIN');const result=await fn(db);await db.query('SELECT pg_notify(\'lumi_calendar\',\'changed\')');await db.query('COMMIT');return result;}catch(e){await db.query('ROLLBACK');throw e;}finally{db.release();}}
 const lockDay=(db,id,date)=>db.query('SELECT pg_advisory_xact_lock(hashtext($1))',[id+':'+date]);
@@ -56,18 +58,7 @@ app.post('/api/holds',async(req,res)=>{
  if(!result)fail('Это время уже занято. Выберите другое окошко.',409);res.status(201).json(result);
 });
 app.delete('/api/holds/:id',async(req,res)=>{validId(req.params.id);const token=req.body?.token;if(typeof token!=='string')fail('Нужен ключ резерва');const row=await transaction(async db=>(await db.query("UPDATE appointments SET status='expired' WHERE id=$1 AND token_hash=$2 AND status='held' RETURNING *",[req.params.id,hash(token)])).rows[0]);if(row)await releaseRedis(toApp(row),token);res.json({ok:true});});
-app.post('/api/appointments',async(req,res)=>{
- const q=req.body;validId(q.id);if(typeof q.token!=='string'||typeof q.name!=='string'||q.name.trim().length<2||q.name.length>100||typeof q.phone!=='string'||!isValidKgPhone(q.phone)||typeof(q.comment||'')!=='string'||(q.comment||'').length>1000)fail('Проверьте имя, телефон и комментарий');
- const row=await transaction(async db=>{
-  const a=(await db.query('SELECT * FROM appointments WHERE id=$1 AND token_hash=$2 FOR UPDATE',[q.id,hash(q.token)])).rows[0];if(!a)fail('Резерв не найден',409);if(a.status==='confirmed')return a;
-  if(a.status!=='held'||new Date(a.expires_at)<=new Date())fail('Резерв истёк. Выберите время заново.',409);
-  const saved=(await db.query("UPDATE appointments SET status='confirmed',name=$2,phone=$3,comment=$4 WHERE id=$1 RETURNING *",[q.id,q.name.trim(),q.phone,q.comment||''])).rows[0];await enqueue(db,saved,'created',zone);return saved;
- });await releaseStored(row);res.status(201).json({...toApp(row),token:q.token,timezone:zone});
-});
-app.patch('/api/appointments/:id/cancel',async(req,res)=>{
- validId(req.params.id);if(typeof req.body?.token!=='string')fail('Нужен ключ записи');
- const row=await transaction(async db=>{const a=(await db.query('SELECT * FROM appointments WHERE id=$1 AND token_hash=$2 FOR UPDATE',[req.params.id,hash(req.body.token)])).rows[0];if(!a)fail('Запись не найдена',404);if(!['confirmed','new','cancelled'].includes(a.status))fail('Этот визит нельзя отменить',409);if(a.status==='cancelled')return a;const updated=(await db.query("UPDATE appointments SET status='cancelled' WHERE id=$1 RETURNING *",[a.id])).rows[0];await enqueue(db,updated,'cancelled',zone);return updated;});await releaseRedis(toApp(row),req.body.token);res.json({...toApp(row),token:req.body.token,timezone:zone});
-});
+registerPublicBooking(app,{pool,transaction,toApp,hash,zone,fail,validId,releaseStored});
 // Only invalidations are broadcast. Customer names, numbers and tokens never enter SSE.
 const streams=new Set();app.get('/api/events',(req,res)=>{if(streams.size>=200)return res.status(503).json({error:'Повторите подключение позже'});res.set({'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive','X-Accel-Buffering':'no'});res.flushHeaders();res.write('data: changed\n\n');streams.add(res);req.on('close',()=>streams.delete(res));});
 const listener=await pool.connect();await listener.query('LISTEN lumi_calendar');listener.on('notification',()=>{for(const res of streams)res.write('data: changed\n\n');});listener.on('error',()=>{console.error('Calendar listener disconnected; clients will poll.');for(const res of streams)res.end();streams.clear();});
@@ -79,8 +70,14 @@ app.post('/api/admin/login',async(req,res)=>{
 });
 app.use('/api/admin',async(req,res,next)=>{try{const token=req.headers.cookie?.split(';').map(x=>x.trim()).find(x=>x.startsWith('lumi_admin='))?.slice(11);if(!token)fail('Войдите в кабинет',401);const session=await pool.query('SELECT 1 FROM admin_sessions WHERE token_hash=$1 AND expires_at>now()',[hash(token)]);if(!session.rowCount)fail('Сессия истекла',401);req.adminToken=token;next();}catch(e){next(e);}});
 app.post('/api/admin/logout',async(req,res)=>{await pool.query('DELETE FROM admin_sessions WHERE token_hash=$1',[hash(req.adminToken)]);res.clearCookie('lumi_admin',{path:'/api/admin'});res.json({ok:true});});
-app.get('/api/admin/data',async(req,res)=>{res.set('Cache-Control','no-store');const appointments=(await pool.query("SELECT * FROM appointments WHERE status NOT IN ('expired','held') ORDER BY date,start")).rows.map(toApp);const schedules=(await pool.query("SELECT staff_id,to_char(date,'YYYY-MM-DD') AS date,start,\"end\",off,breaks FROM schedules")).rows.map(scheduleRow);res.json({...await catalog(pool,true),...await getSite(pool),appointments,schedules,timezone:zone});});
-app.patch('/api/admin/appointments/:id',async(req,res)=>{validId(req.params.id);const status=req.body.status;if(!['new','confirmed','completed','cancelled','no_show'].includes(status))fail('Некорректный статус');await transaction(async db=>{const a=(await db.query('SELECT * FROM appointments WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];if(!a||['held','expired'].includes(a.status))fail('Запись не найдена',404);if(a.status==='cancelled'&&status!=='cancelled')fail('Создайте новую запись для отменённого визита',409);if(a.status===status)return;const updated=(await db.query('UPDATE appointments SET status=$2 WHERE id=$1 RETURNING *',[a.id,status])).rows[0];if(status==='cancelled')await enqueue(db,updated,'cancelled',zone);});res.json({ok:true});});
+app.get('/api/admin/data',async(req,res)=>{
+ res.set('Cache-Control','no-store');const appointments=(await pool.query("SELECT * FROM appointments WHERE status NOT IN ('expired','held') ORDER BY date,start")).rows.map(toApp);const schedules=(await pool.query('SELECT * FROM schedules')).rows.map(scheduleRow);
+ const clients=(await pool.query('SELECT id,name,phone,source FROM clients ORDER BY created_at DESC')).rows;
+ const notifications=(await pool.query("SELECT * FROM notifications WHERE channel='whatsapp' ORDER BY due_at DESC LIMIT 250")).rows.map(n=>({id:n.id,appointmentId:n.appointment_id,kind:n.kind,audience:n.audience,recipient:n.recipient,text:n.payload?.text||'',dueAt:new Date(n.due_at).getTime(),state:n.last_error?.startsWith('skipped')?'skipped':n.sent_at?'accepted':n.attempts>=8?'failed':!whatsappReady(n.kind)?'blocked':'queued',lastError:n.last_error,attempts:n.attempts}));
+ res.json({...await catalog(pool,true),...await getSite(pool),appointments,schedules,clients,notifications,whatsappReady:whatsappReady(),timezone:zone});
+});
+app.patch('/api/admin/appointments/:id',async(req,res)=>{validId(req.params.id);const status=req.body.status;if(!['new','confirmed','completed','cancelled','no_show'].includes(status))fail('Некорректный статус');await transaction(async db=>{const a=(await db.query('SELECT * FROM appointments WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];if(!a||['held','expired'].includes(a.status))fail('Запись не найдена',404);if(['pending_payment','payment_review'].includes(a.status)&&status!=='cancelled')fail('Сначала подтвердите предоплату',409);if(a.status==='cancelled'&&status!=='cancelled')fail('Создайте новую запись для отменённого визита',409);if(a.status===status)return;const updated=(await db.query('UPDATE appointments SET status=$2 WHERE id=$1 RETURNING *',[a.id,status])).rows[0];if(status==='cancelled')await enqueue(db,updated,'cancelled',zone);});res.json({ok:true});});
+registerPaymentAdmin(app,{pool,transaction,toApp,zone,fail,validId});
 registerContentRoutes(app,{pool,transaction});
 app.put('/api/admin/schedules',async(req,res)=>{
  const q=req.body;validateSelection({date:q.date,serviceIds:[1],staffId:q.staffId});validateSchedule(q);if(typeof q.off!=='boolean'||!Number.isInteger(q.staffId))fail('Проверьте мастера и выходной день');
@@ -91,7 +88,8 @@ app.put('/api/admin/schedules',async(req,res)=>{
 app.use('/api',(req,res)=>res.status(404).json({error:'Маршрут не найден'}));
 const dist=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../dist');app.use(express.static(dist));app.get('/',(req,res)=>res.sendFile(path.join(dist,'index.html')));
 app.use((err,req,res,next)=>{if(res.headersSent)return next(err);const status=err.status||(err.code==='23P01'?409:500);if(status>=500)console.error('Request failed:',err.code||err.name);res.status(status).json({error:status===500?'Сервис временно недоступен. Попробуйте позже.':status===409&&err.code==='23P01'?'Время уже занято. Выберите другое.':err.message});});
+const paymentCleanup=setInterval(()=>expirePendingPayments(pool,zone).catch(()=>console.error('Payment cleanup failed')),15000);
 const stopNotifications=startNotifications(pool,zone);const server=app.listen(Number(process.env.PORT)||3001,'127.0.0.1',()=>console.log('MADINLASHES server is ready.'));
 const cleanup=setInterval(()=>pool.query("WITH expired AS (UPDATE appointments SET status='expired' WHERE status='held' AND expires_at<=now() RETURNING id) SELECT CASE WHEN count(*)>0 THEN pg_notify('lumi_calendar','changed') END FROM expired").catch(()=>console.error('Hold cleanup failed')),15000);
-async function shutdown(){clearInterval(cleanup);clearInterval(heartbeat);stopNotifications();for(const res of streams)res.end();server.close();listener.release();await redis.quit();await pool.end();}
+async function shutdown(){clearInterval(cleanup);clearInterval(paymentCleanup);clearInterval(heartbeat);stopNotifications();for(const res of streams)res.end();server.close();listener.release();await redis.quit();await pool.end();}
 process.on('SIGINT',()=>shutdown().then(()=>process.exit()));process.on('SIGTERM',()=>shutdown().then(()=>process.exit()));

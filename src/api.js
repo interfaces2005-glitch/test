@@ -5,6 +5,7 @@ import {validateSchedule} from '../server/domain.mjs';
 import {defaultSite,normalizeSite,validateService,categoryLabels,validImage} from '../shared/site-content.mjs';
 import {storeLocalImage} from './media';
 import {accessState} from './state-store';
+import {hydrateBooking,expirePayments,depositQuote,phoneKey,paymentPending,registerClient,addDemoNotifications} from '../shared/booking.mjs';
 export const DEMO=import.meta.env.VITE_DEMO!=='false';
 const KEY='lumi-demo-v1';
 const channel=typeof BroadcastChannel!=='undefined'?new BroadcastChannel('lumi-bookings'):null;
@@ -18,9 +19,9 @@ function hydrate(value){
   data.services=data.services.map(s=>s.category==='nails'?{...s,is_active:false}:({...s,category:s.id===3?'lamination':s.category==='lashes'?'extensions':s.category,image:s.image||'/images/beauty.jpg'}));
   data.staff=data.staff.map(m=>({...m,role:m.role.includes('маникюр')||m.role.includes('маникюра')?(m.id===2?'Мастер ламинирования':'Мастер по ресницам'):m.role,serviceIds:m.serviceIds.filter(id=>![4,5,6].includes(id)).concat(m.id===2?[3]:[])}));data.contentVersion=1;
  }
- data.site??=structuredClone(defaultSite);data.site.legal??=structuredClone(defaultSite.legal);data.siteRevision??=0;return data;
+ data.site??=structuredClone(defaultSite);data.site.legal??=structuredClone(defaultSite.legal);data.siteRevision??=0;return expirePayments(hydrateBooking(data));
 }
-function publicData(d){return {services:d.services.filter(s=>s.is_active!==false&&categoryLabels[s.category]),staff:d.staff.filter(s=>s.is_active!==false),site:d.site,siteRevision:d.siteRevision,timezone:STUDIO_TIMEZONE};}
+function publicData(d){return {services:d.services.filter(s=>s.is_active!==false&&categoryLabels[s.category]),staff:d.staff.filter(s=>s.is_active!==false).map(({whatsapp,whatsappOptIn,...s})=>s),site:d.site,siteRevision:d.siteRevision,timezone:STUDIO_TIMEZONE};}
 function commit(data){try{const previous=JSON.parse(localStorage.getItem(KEY)||'null');if(!previous||!(previous.stateVersion>data.stateVersion))localStorage.setItem(KEY,JSON.stringify(data));}catch{}notify();}
 const read=()=>accessState(hydrate,null,commit);
 const atomic=fn=>accessState(hydrate,fn,commit);
@@ -30,7 +31,7 @@ function slots(data,{date,serviceIds,staffId},exclude){
  const team=compatibleStaff(serviceIds,publicData(data).staff).filter(s=>!staffId||s.id===Number(staffId));
  const now=new Date();const local=localNow(STUDIO_TIMEZONE);
  return team.flatMap(s=>{
-  const schedule=data.schedules.find(x=>x.date===date&&x.staffId===s.id)||{start:600,end:1200,breaks:[{start:840,end:870}]};
+  const schedule=data.schedules.find(x=>x.date===date&&x.staffId===s.id)||{start:540,end:1200,breaks:[{start:840,end:870}]};
   if(schedule.off||date<local.date||dateKey(new Date(now.getTime()+90*864e5))<date)return [];
   const busy=[...schedule.breaks,...data.appointments.filter(a=>a.id!==exclude&&a.date===date&&a.staffId===s.id&&a.status!=='cancelled'&&a.status!=='expired'&&(a.status!=='held'||a.expiresAt>Date.now())).map(a=>({start:a.start,end:a.end}))];
   return generateSlots({start:schedule.start,end:schedule.end,duration,busy,notBefore:date===local.date?local.minute+30:0}).map(t=>({start:t,staffId:s.id}));
@@ -48,18 +49,27 @@ export const api={
   const totals=totalFor(q.serviceIds,data.services);const a={id:crypto.randomUUID(),token:crypto.randomUUID(),...q,staffId:match.staffId,end:q.start+totals.duration,price:totals.price,titles:totals.selected.map(s=>s.title),status:'held',expiresAt:Date.now()+6*60e3};data.appointments.push(a);return a;
  });},
  async release(a){if(!a)return;if(!DEMO)return request('/holds/'+a.id,{token:a.token},'DELETE');return atomic(d=>{const x=d.appointments.find(x=>x.id===a.id&&x.token===a.token&&x.status==='held');if(x)x.status='expired';});},
+ async quote(q){if(!DEMO)return request('/booking-quote',q);const d=await read(),a=d.appointments.find(a=>a.id===q.id&&a.token===q.token);if(!a||!isValidKgPhone(q.phone))throw new Error('Проверьте номер и резерв');return depositQuote(d.clients,q.phone,a.price,d.site.booking);},
  async book(q){if(!isValidKgPhone(q.phone))throw new Error('Введите телефон в формате +996 (XXX) XXX-XXX');if(!DEMO)return request('/appointments',q);return atomic(d=>{
-  const a=d.appointments.find(a=>a.id===q.id&&a.token===q.token);if(!a||a.expiresAt<=Date.now()||!['held','confirmed'].includes(a.status))conflict();if(a.status==='confirmed')return a;
-  Object.assign(a,{name:q.name,phone:q.phone,comment:q.comment,status:'confirmed'});return a;
+  const a=d.appointments.find(a=>a.id===q.id&&a.token===q.token);if(!a)conflict();if(['confirmed','pending_payment','payment_review'].includes(a.status))return a;if(a.status!=='held'||a.expiresAt<=Date.now())conflict();
+  const quote=depositQuote(d.clients,q.phone,a.price,d.site.booking);
+  if(quote.requiresDeposit&&d.appointments.some(x=>x.id!==a.id&&phoneKey(x.phone)===phoneKey(q.phone)&&paymentPending(x)))throw new Error('У вас уже есть заявка с неоплаченной предоплатой. Завершите её или свяжитесь со студией.');
+  Object.assign(a,{name:q.name.trim(),phone:q.phone,comment:q.comment||'',notifyWhatsapp:!!q.notifyWhatsapp,status:quote.requiresDeposit?'pending_payment':'confirmed',depositAmount:quote.depositAmount,depositPaid:0,paymentStatus:quote.requiresDeposit?'awaiting_transfer':'not_required',paymentDeadline:quote.requiresDeposit?Date.now()+d.site.booking.paymentMinutes*60000:null});
+  if(a.status==='confirmed')registerClient(d.clients,a,'booking');addDemoNotifications(d,a,'created');return a;
  });},
- async cancel(id,token){if(!DEMO)return request('/appointments/'+id+'/cancel',{token},'PATCH');return atomic(d=>{const a=d.appointments.find(x=>x.id===id&&x.token===token);if(!a)throw new Error('Запись не найдена');a.status='cancelled';return a;});},
+ async visit(id,token){if(!DEMO){const res=await fetch('/api/appointments/'+id,{headers:{Authorization:'Bearer '+token},credentials:'same-origin'});const d=await res.json();if(!res.ok)throw new Error(d.error||'Запись не найдена');return {...d,token};}const d=await read(),a=d.appointments.find(a=>a.id===id&&a.token===token);if(!a)throw new Error('Запись не найдена');return a;},
+ async submitReceipt(id,token,blob){if(!DEMO){const res=await fetch('/api/appointments/'+id+'/receipt',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':blob.type},credentials:'same-origin',body:blob});const d=await res.json();if(!res.ok)throw new Error(d.error||'Чек не отправлен');return {...d,token};}const image=await storeLocalImage(blob);return atomic(d=>{const a=d.appointments.find(a=>a.id===id&&a.token===token);if(!a||!paymentPending(a))throw new Error('Запись уже подтверждена или срок оплаты истёк');a.receipt=image;a.receiptMime=blob.type;a.hasReceipt=true;a.status='payment_review';a.paymentStatus='review';a.paymentNote='';addDemoNotifications(d,a,'receipt');return a;});},
+ async confirmPayment(id,amount,verified){if(!verified)throw new Error('Подтвердите, что поступление проверено');if(!DEMO)return request('/admin/payments/'+id+'/confirm',{amount,verified});return atomic(d=>{const a=d.appointments.find(a=>a.id===id);if(!a)throw new Error('Запись не найдена');if(a.paymentStatus==='paid')return a;if(!paymentPending(a)||amount!==a.depositAmount)throw new Error('Проверьте сумму и состояние записи');a.status='confirmed';a.paymentStatus='paid';a.depositPaid=a.depositAmount;a.paymentDeadline=null;registerClient(d.clients,a);addDemoNotifications(d,a,'confirmed');return a;});},
+ async rejectPayment(id,reason){if(!DEMO)return request('/admin/payments/'+id+'/reject',{reason});return atomic(d=>{const a=d.appointments.find(a=>a.id===id);if(!a||!paymentPending(a))throw new Error('Запись недоступна для проверки');a.status='pending_payment';a.paymentStatus='rejected';a.paymentNote=reason||'Не удалось подтвердить перевод. Свяжитесь со студией.';a.paymentDeadline=Date.now()+d.site.booking.paymentMinutes*60000;return a;});},
+ async addClient(c){if(!c.name?.trim()||!isValidKgPhone(c.phone))throw new Error('Проверьте имя и телефон');if(!DEMO)return request('/admin/clients',c);return atomic(d=>registerClient(d.clients,{...c,id:crypto.randomUUID()},'admin'));},
+ async cancel(id,token){if(!DEMO)return request('/appointments/'+id+'/cancel',{token},'PATCH');return atomic(d=>{const a=d.appointments.find(x=>x.id===id&&x.token===token);if(!a)throw new Error('Запись не найдена');if(!['confirmed','new','pending_payment','payment_review','cancelled'].includes(a.status))throw new Error('Этот визит нельзя отменить');if(a.status!=='cancelled'){a.status='cancelled';addDemoNotifications(d,a,'cancelled');}return a;});},
  async login(password){return DEMO?{demo:true}:request('/admin/login',{password});},
  async logout(){if(!DEMO)await request('/admin/logout',{});},
- async adminData(){if(DEMO){const d=await read();return {...d,...publicData(d),staff:d.staff};}return request('/admin/data');},
- async status(id,status){if(!DEMO)return request('/admin/appointments/'+id,{status},'PATCH');return atomic(d=>{const a=d.appointments.find(x=>x.id===id);if(!a)throw new Error('Запись не найдена');if(a.status==='cancelled'&&status!=='cancelled')throw new Error('Создайте новую запись для отменённого визита');a.status=status;});},
+ async adminData(){if(DEMO){const d=await read();return {...d,...publicData(d),staff:d.staff,whatsappReady:false};}return request('/admin/data');},
+ async status(id,status){if(!DEMO)return request('/admin/appointments/'+id,{status},'PATCH');return atomic(d=>{const a=d.appointments.find(x=>x.id===id);if(!a)throw new Error('Запись не найдена');if(a.status==='cancelled'&&status!=='cancelled')throw new Error('Создайте новую запись для отменённого визита');if(paymentPending(a)&&!['cancelled',a.status].includes(status))throw new Error('Сначала подтвердите предоплату');if(status==='cancelled'&&a.status!=='cancelled')addDemoNotifications(d,{...a,status},'cancelled');a.status=status;});},
  async saveService(value){const s=validateService(value);if(!DEMO)return request(s.id?'/admin/services/'+s.id:'/admin/services',s,s.id?'PUT':'POST');return atomic(d=>{let id=s.id;if(id){const existing=d.services.find(x=>x.id===id&&x.is_active!==false);if(!existing)throw new Error('Услуга больше недоступна');Object.assign(existing,s);}else{id=Math.max(100,...d.services.map(s=>s.id))+1;d.services.push({...s,id,is_active:true});}d.staff.forEach(m=>{m.serviceIds=m.serviceIds.filter(sid=>sid!==id);if(s.staffIds.includes(m.id))m.serviceIds.push(id);});return {id};});},
  async deleteService(id){if(!DEMO)return request('/admin/services/'+id,{},'DELETE');return atomic(d=>{const s=d.services.find(s=>s.id===id);if(s)s.is_active=false;});},
- async saveStaff(s){if(!s.name?.trim()||!s.role?.trim()||!validImage(s.image||''))throw new Error('Проверьте имя, специализацию и фото мастера');if(!DEMO)return request('/admin/staff/'+s.id,s,'PUT');return atomic(d=>{const m=d.staff.find(m=>m.id===s.id);if(!m)throw new Error('Мастер не найден');Object.assign(m,{name:s.name.trim(),role:s.role.trim(),image:s.image,is_active:s.is_active});});},
+ async saveStaff(s){if(!s.name?.trim()||!s.role?.trim()||!validImage(s.image||'')||(s.whatsapp&&!isValidKgPhone(s.whatsapp))||(s.whatsappOptIn&&!isValidKgPhone(s.whatsapp)))throw new Error('Проверьте имя, фото и номер WhatsApp мастера');if(!DEMO)return request('/admin/staff/'+s.id,s,'PUT');return atomic(d=>{const m=d.staff.find(m=>m.id===s.id);if(!m)throw new Error('Мастер не найден');Object.assign(m,{name:s.name.trim(),role:s.role.trim(),image:s.image,is_active:s.is_active,whatsapp:s.whatsapp||'',whatsappOptIn:!!s.whatsappOptIn});});},
  async saveSite(site,revision){const normalized=normalizeSite(site);if(!DEMO)return request('/admin/site',{site:normalized,revision},'PUT');return atomic(d=>{if(d.siteRevision!==revision){const e=new Error('Сайт уже изменён в другой вкладке. Загрузите сохранённую версию перед повторным редактированием.');e.status=409;throw e;}d.site=normalized;d.siteRevision++;return {site:normalized,siteRevision:d.siteRevision};});},
  async uploadImage(blob){if(DEMO)return storeLocalImage(blob);const res=await fetch('/api/admin/media',{method:'POST',credentials:'same-origin',headers:{'Content-Type':blob.type},body:blob});const data=await res.json();if(!res.ok)throw new Error(data.error||'Не удалось загрузить фото');return data.image;},
  async schedule(q){validateSchedule(q);if(!DEMO)return request('/admin/schedules',q,'PUT');return atomic(d=>{

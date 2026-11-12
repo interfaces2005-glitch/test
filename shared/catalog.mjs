@@ -14,7 +14,7 @@ export const pad = n=>String(n).padStart(2,'0');
 export const dateKey = d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 export const today = ()=>dateKey(new Date());
 export const minuteLabel = n=>`${pad(Math.floor(n/60))}:${pad(n%60)}`;
-export function generateSlots({start=600,end=1200,duration,busy=[],notBefore=0}) {
+export function generateSlots({start=540,end=1200,duration,busy=[],notBefore=0}) {
  const slots=[];
  for(let t=start;t+duration<=end;t+=30) if(t>=notBefore&&!busy.some(b=>t<b.end&&t+duration>b.start)) slots.push(t);
  return slots;
