@@ -20,7 +20,9 @@ function hydrate(value){
   data.services=data.services.map(s=>s.category==='nails'?{...s,is_active:false}:({...s,category:s.id===3?'lamination':s.category==='lashes'?'extensions':s.category,image:s.image||'/images/beauty.jpg'}));
   data.staff=data.staff.map(m=>({...m,role:m.role.includes('маникюр')||m.role.includes('маникюра')?(m.id===2?'Мастер ламинирования':'Мастер по ресницам'):m.role,serviceIds:m.serviceIds.filter(id=>![4,5,6].includes(id)).concat(m.id===2?[3]:[])}));data.contentVersion=1;
  }
- data.site??=structuredClone(defaultSite);data.site.legal??=structuredClone(defaultSite.legal);data.siteRevision??=0;return expirePayments(hydrateBooking(data));
+ data.site??=structuredClone(defaultSite);data.site.legal??=structuredClone(defaultSite.legal);data.siteRevision??=0;
+ if(!data.paymentDetailsVersion){if(!data.site.booking?.qrImage&&!data.site.booking?.recipient){data.site.booking={...data.site.booking,qrImage:defaultSite.booking.qrImage,recipient:defaultSite.booking.recipient,paymentNote:defaultSite.booking.paymentNote};data.siteRevision++;}data.paymentDetailsVersion=1;}
+ return expirePayments(hydrateBooking(data));
 }
 function publicData(d){return {services:d.services.filter(s=>s.is_active!==false&&categoryLabels[s.category]),staff:d.staff.filter(s=>s.is_active!==false).map(({whatsapp,whatsappOptIn,...s})=>s),site:d.site,siteRevision:d.siteRevision,timezone:STUDIO_TIMEZONE};}
 function commit(data){try{const previous=JSON.parse(localStorage.getItem(KEY)||'null');if(!previous||!(previous.stateVersion>data.stateVersion))localStorage.setItem(KEY,JSON.stringify(data));}catch{}notify();}

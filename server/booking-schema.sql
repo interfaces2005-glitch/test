@@ -37,3 +37,9 @@ DO $$ BEGIN
   INSERT INTO app_migrations VALUES('payments-nine-am-v1');
  END IF;
 END $$;
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM app_migrations WHERE key='studio-payment-qr-v1') THEN
+  UPDATE site_content SET revision=revision+1,updated_at=now(),content=jsonb_set(content,'{booking}',COALESCE(content->'booking','{}'::jsonb)||'{"qrImage":"/images/payment-qr.jpg","recipient":"Мадина К. · +996 (999) 019-454","paymentNote":"Сохраните QR и откройте его из галереи в банковском приложении. Проверьте получателя: Мадина К. Переведите предоплату и загрузите чек ниже. Мастер подтвердит запись после проверки поступления."}'::jsonb) WHERE COALESCE(content->'booking'->>'qrImage','')='' AND COALESCE(content->'booking'->>'recipient','')='';
+  INSERT INTO app_migrations VALUES('studio-payment-qr-v1');
+ END IF;
+END $$;
