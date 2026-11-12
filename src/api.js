@@ -6,6 +6,7 @@ import {defaultSite,normalizeSite,validateService,categoryLabels,validImage} fro
 import {storeLocalImage} from './media';
 import {accessState} from './state-store';
 import {hydrateBooking,expirePayments,depositQuote,phoneKey,paymentPending,registerClient,addDemoNotifications} from '../shared/booking.mjs';
+import {demoLogin,demoLogout,requireDemoAdmin} from './demo-auth';
 export const DEMO=import.meta.env.VITE_DEMO!=='false';
 const KEY='lumi-demo-v1';
 const channel=typeof BroadcastChannel!=='undefined'?new BroadcastChannel('lumi-bookings'):null;
@@ -63,8 +64,8 @@ export const api={
  async rejectPayment(id,reason){if(!DEMO)return request('/admin/payments/'+id+'/reject',{reason});return atomic(d=>{const a=d.appointments.find(a=>a.id===id);if(!a||!paymentPending(a))throw new Error('Запись недоступна для проверки');a.status='pending_payment';a.paymentStatus='rejected';a.paymentNote=reason||'Не удалось подтвердить перевод. Свяжитесь со студией.';a.paymentDeadline=Date.now()+d.site.booking.paymentMinutes*60000;return a;});},
  async addClient(c){if(!c.name?.trim()||!isValidKgPhone(c.phone))throw new Error('Проверьте имя и телефон');if(!DEMO)return request('/admin/clients',c);return atomic(d=>registerClient(d.clients,{...c,id:crypto.randomUUID()},'admin'));},
  async cancel(id,token){if(!DEMO)return request('/appointments/'+id+'/cancel',{token},'PATCH');return atomic(d=>{const a=d.appointments.find(x=>x.id===id&&x.token===token);if(!a)throw new Error('Запись не найдена');if(!['confirmed','new','pending_payment','payment_review','cancelled'].includes(a.status))throw new Error('Этот визит нельзя отменить');if(a.status!=='cancelled'){a.status='cancelled';addDemoNotifications(d,a,'cancelled');}return a;});},
- async login(password){return DEMO?{demo:true}:request('/admin/login',{password});},
- async logout(){if(!DEMO)await request('/admin/logout',{});},
+ async login(login,password){return DEMO?demoLogin(login,password):request('/admin/login',{login,password});},
+ async logout(){if(DEMO)demoLogout();else await request('/admin/logout',{});},
  async adminData(){if(DEMO){const d=await read();return {...d,...publicData(d),staff:d.staff,whatsappReady:false};}return request('/admin/data');},
  async status(id,status){if(!DEMO)return request('/admin/appointments/'+id,{status},'PATCH');return atomic(d=>{const a=d.appointments.find(x=>x.id===id);if(!a)throw new Error('Запись не найдена');if(a.status==='cancelled'&&status!=='cancelled')throw new Error('Создайте новую запись для отменённого визита');if(paymentPending(a)&&!['cancelled',a.status].includes(status))throw new Error('Сначала подтвердите предоплату');if(status==='cancelled'&&a.status!=='cancelled')addDemoNotifications(d,{...a,status},'cancelled');a.status=status;});},
  async saveService(value){const s=validateService(value);if(!DEMO)return request(s.id?'/admin/services/'+s.id:'/admin/services',s,s.id?'PUT':'POST');return atomic(d=>{let id=s.id;if(id){const existing=d.services.find(x=>x.id===id&&x.is_active!==false);if(!existing)throw new Error('Услуга больше недоступна');Object.assign(existing,s);}else{id=Math.max(100,...d.services.map(s=>s.id))+1;d.services.push({...s,id,is_active:true});}d.staff.forEach(m=>{m.serviceIds=m.serviceIds.filter(sid=>sid!==id);if(s.staffIds.includes(m.id))m.serviceIds.push(id);});return {id};});},
@@ -79,3 +80,7 @@ export const api={
  });},
  subscribe(fn){listeners.add(fn);let es;if(!DEMO){es=new EventSource('/api/events');es.onmessage=fn;es.onerror=()=>fn();}const timer=setInterval(fn,30000);return()=>{listeners.delete(fn);es?.close();clearInterval(timer);};}
 };
+// The same admin operations require a session in both modes. Static demo data remains browser-local.
+for(const name of ['adminData','status','saveService','deleteService','saveStaff','saveSite','uploadImage','schedule','addClient','confirmPayment','rejectPayment']){
+ const operation=api[name];api[name]=async(...args)=>{if(DEMO)requireDemoAdmin();return operation(...args);};
+}

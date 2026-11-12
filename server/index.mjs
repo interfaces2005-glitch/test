@@ -1,12 +1,13 @@
 import express from 'express';
 import {registerPublicBooking,registerPaymentAdmin,expirePendingPayments} from './booking-routes.mjs';
 import {toApp} from './appointment-record.mjs';
+import {registerAdminAuth} from './admin-auth.mjs';
 import {getSite,registerContentRoutes} from './content-routes.mjs';
 import {isValidKgPhone,STUDIO_TIMEZONE} from '../shared/contact.mjs';
 import helmet from 'helmet';
 import pg from 'pg';
 import {createClient} from 'redis';
-import {randomUUID,randomBytes,createHash,timingSafeEqual} from 'node:crypto';
+import {randomUUID,randomBytes,createHash} from 'node:crypto';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {totalFor,minuteLabel} from '../shared/catalog.mjs';
@@ -18,6 +19,7 @@ const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:15});
 const redis=createClient({url:process.env.REDIS_URL});redis.on('error',()=>console.error('Redis connection error'));
 const zone=process.env.STUDIO_TIMEZONE||STUDIO_TIMEZONE;const origin=process.env.APP_ORIGIN||'http://localhost:3001';const production=process.env.NODE_ENV==='production';
 if(!process.env.DATABASE_URL||!process.env.REDIS_URL||!process.env.ADMIN_PASSWORD||process.env.ADMIN_PASSWORD.length<16||process.env.ADMIN_PASSWORD.includes('replace-with'))throw new Error('Configure DATABASE_URL, REDIS_URL and a unique ADMIN_PASSWORD (16+ characters).');
+const adminLogin=process.env.ADMIN_LOGIN||'admin';if(!adminLogin.trim()||adminLogin.length>64||process.env.ADMIN_PASSWORD.length>256)throw new Error('Configure ADMIN_LOGIN (1-64 characters) and ADMIN_PASSWORD (16-256 characters).');
 await redis.connect();await pool.query('SELECT 1');
 const hash=s=>createHash('sha256').update(String(s)).digest('hex');const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status});};
 const validId=id=>{if(!/^[0-9a-f-]{36}$/i.test(id||''))fail('Некорректный идентификатор');return id;};
@@ -63,13 +65,7 @@ registerPublicBooking(app,{pool,transaction,toApp,hash,zone,fail,validId,release
 const streams=new Set();app.get('/api/events',(req,res)=>{if(streams.size>=200)return res.status(503).json({error:'Повторите подключение позже'});res.set({'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive','X-Accel-Buffering':'no'});res.flushHeaders();res.write('data: changed\n\n');streams.add(res);req.on('close',()=>streams.delete(res));});
 const listener=await pool.connect();await listener.query('LISTEN lumi_calendar');listener.on('notification',()=>{for(const res of streams)res.write('data: changed\n\n');});listener.on('error',()=>{console.error('Calendar listener disconnected; clients will poll.');for(const res of streams)res.end();streams.clear();});
 const heartbeat=setInterval(()=>{for(const res of streams)res.write(': heartbeat\n\n');},20000);
-app.post('/api/admin/login',async(req,res)=>{
- const key='login:'+hash(req.ip);const attempts=await redis.incr(key);if(attempts===1)await redis.expire(key,900);if(attempts>10)fail('Повторите вход через 15 минут',429);
- const supplied=hash(req.body?.password||'');if(!timingSafeEqual(Buffer.from(supplied),Buffer.from(hash(process.env.ADMIN_PASSWORD))))fail('Неверный пароль',401);
- const token=randomBytes(32).toString('hex');await pool.query("INSERT INTO admin_sessions VALUES($1,now()+interval '12 hours')",[hash(token)]);res.cookie('lumi_admin',token,{httpOnly:true,secure:production,sameSite:'strict',maxAge:12*3600e3,path:'/api/admin'});res.json({ok:true});
-});
-app.use('/api/admin',async(req,res,next)=>{try{const token=req.headers.cookie?.split(';').map(x=>x.trim()).find(x=>x.startsWith('lumi_admin='))?.slice(11);if(!token)fail('Войдите в кабинет',401);const session=await pool.query('SELECT 1 FROM admin_sessions WHERE token_hash=$1 AND expires_at>now()',[hash(token)]);if(!session.rowCount)fail('Сессия истекла',401);req.adminToken=token;next();}catch(e){next(e);}});
-app.post('/api/admin/logout',async(req,res)=>{await pool.query('DELETE FROM admin_sessions WHERE token_hash=$1',[hash(req.adminToken)]);res.clearCookie('lumi_admin',{path:'/api/admin'});res.json({ok:true});});
+registerAdminAuth(app,{pool,redis,hash,fail,production,credentials:{login:adminLogin,password:process.env.ADMIN_PASSWORD}});
 app.get('/api/admin/data',async(req,res)=>{
  res.set('Cache-Control','no-store');const appointments=(await pool.query("SELECT * FROM appointments WHERE status NOT IN ('expired','held') ORDER BY date,start")).rows.map(toApp);const schedules=(await pool.query('SELECT * FROM schedules')).rows.map(scheduleRow);
  const clients=(await pool.query('SELECT id,name,phone,source FROM clients ORDER BY created_at DESC')).rows;
