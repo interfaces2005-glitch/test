@@ -1,10 +1,11 @@
 import {randomUUID} from 'node:crypto';
-import {notificationJobs} from '../shared/booking.mjs';
+import {notificationJobs,phoneKey} from '../shared/booking.mjs';
 import {studioInstant} from '../shared/time.mjs';
 import {getSite} from './content-routes.mjs';
 import {toApp} from './appointment-record.mjs';
 import {viewToken} from './visit-token.mjs';
-const templateEnv={client_pending:'WA_CLIENT_PENDING_TEMPLATE',client_confirmed:'WA_CLIENT_CONFIRMED_TEMPLATE',client_reminder:'WA_CLIENT_REMINDER_TEMPLATE',client_cancelled:'WA_CLIENT_CANCELLED_TEMPLATE',staff_new:'WA_STAFF_NEW_TEMPLATE',staff_confirmed:'WA_STAFF_CONFIRMED_TEMPLATE',staff_receipt:'WA_STAFF_RECEIPT_TEMPLATE',staff_cancelled:'WA_STAFF_CANCELLED_TEMPLATE'};
+import {isValidKgPhone} from '../shared/contact.mjs';
+const templateEnv={client_pending:'WA_CLIENT_PENDING_TEMPLATE',client_confirmed:'WA_CLIENT_CONFIRMED_TEMPLATE',client_reminder:'WA_CLIENT_REMINDER_TEMPLATE',client_cancelled:'WA_CLIENT_CANCELLED_TEMPLATE',staff_new:'WA_STAFF_NEW_TEMPLATE',staff_confirmed:'WA_STAFF_CONFIRMED_TEMPLATE',staff_receipt:'WA_STAFF_RECEIPT_TEMPLATE',staff_cancelled:'WA_STAFF_CANCELLED_TEMPLATE',owner_new:'WA_STAFF_NEW_TEMPLATE',owner_confirmed:'WA_STAFF_CONFIRMED_TEMPLATE',owner_receipt:'WA_STAFF_RECEIPT_TEMPLATE',owner_cancelled:'WA_STAFF_CANCELLED_TEMPLATE'};
 export const whatsappReady=kind=>!!((process.env.WHATSAPP_WEBHOOK_URL?process.env.WHATSAPP_WEBHOOK_URL.startsWith('https://'):false)||(!process.env.WHATSAPP_WEBHOOK_URL&&process.env.WHATSAPP_ACCESS_TOKEN&&process.env.WHATSAPP_PHONE_NUMBER_ID&&/^v\d+\.\d+$/.test(process.env.WHATSAPP_API_VERSION||'')&&(!kind||process.env[templateEnv[kind]])));
 export async function enqueue(db,row,event,zone){
  const {site}=await getSite(db),m=(await db.query('SELECT id,name,whatsapp_phone,whatsapp_opt_in FROM staff WHERE id=$1',[row.staff_id])).rows[0],master=m?{...m,whatsapp:m.whatsapp_phone,whatsappOptIn:m.whatsapp_opt_in}:null;
@@ -17,9 +18,15 @@ export function shouldSend(job,a,now=Date.now(),zone='Asia/Bishkek'){
  if(job.kind==='client_reminder')return a.status==='confirmed'&&studioInstant(a.date,a.start,zone).getTime()>now;
  if(job.kind.endsWith('cancelled'))return a.status==='cancelled';
  if(job.kind==='client_pending')return a.status==='pending_payment';
- if(job.kind==='staff_receipt')return a.status==='payment_review';
+ if(job.kind==='staff_receipt'||job.kind==='owner_receipt')return a.status==='payment_review';
+ if(job.kind==='owner_new')return ['pending_payment','payment_review','confirmed'].includes(a.status);
  if(job.kind==='staff_new')return a.status==='pending_payment'||(a.status==='confirmed'&&!a.depositAmount);
  return a.status==='confirmed';
+}
+export function recipientAllowed(job,site,master){
+ if(job.audience==='owner')return !!(site.booking.whatsappOwnerEnabled&&isValidKgPhone(site.booking.ownerWhatsapp)&&phoneKey(site.booking.ownerWhatsapp)===job.recipient);
+ if(job.audience==='staff')return !!(site.booking.whatsappStaffEnabled&&master?.whatsapp_opt_in&&isValidKgPhone(master.whatsapp_phone)&&phoneKey(master.whatsapp_phone)===job.recipient);
+ return job.audience==='client'&&site.booking.whatsappClientsEnabled;
 }
 export function startNotifications(pool,zone){let running=false,stopped=false;
  async function tick(){if(running||stopped)return;running=true;try{
@@ -27,10 +34,10 @@ export function startNotifications(pool,zone){let running=false,stopped=false;
   for(const job of rows){try{
    const row=(await pool.query('SELECT * FROM appointments WHERE id=$1',[job.appointment_id])).rows[0],a=row?toApp(row):null;
    if(!shouldSend(job,a,Date.now(),zone)){await pool.query("UPDATE notifications SET sent_at=now(),last_error='skipped: outdated' WHERE id=$1",[job.id]);continue;}
-   const {site}=await getSite(pool);if(job.audience==='client'&&!site.booking.whatsappClientsEnabled||job.audience==='staff'&&!site.booking.whatsappStaffEnabled){await pool.query("UPDATE notifications SET sent_at=now(),last_error='skipped: disabled' WHERE id=$1",[job.id]);continue;}
-   const master=(await pool.query('SELECT whatsapp_phone,whatsapp_opt_in FROM staff WHERE id=$1',[a.staffId])).rows[0];if(job.audience==='staff'&&(!master?.whatsapp_opt_in||master.whatsapp_phone.replace(/\D/g,'')!==job.recipient)){await pool.query("UPDATE notifications SET sent_at=now(),last_error='skipped: recipient changed' WHERE id=$1",[job.id]);continue;}
+   const {site}=await getSite(pool),master=(await pool.query('SELECT name,whatsapp_phone,whatsapp_opt_in FROM staff WHERE id=$1',[a.staffId])).rows[0];if(!recipientAllowed(job,site,master)){await pool.query("UPDATE notifications SET sent_at=now(),last_error='skipped: recipient disabled or changed' WHERE id=$1",[job.id]);continue;}
    if(!whatsappReady(job.kind)){await pool.query("UPDATE notifications SET locked_until=NULL,due_at=now()+interval '60 seconds',last_error='WhatsApp provider or template not configured' WHERE id=$1",[job.id]);continue;}
-   const link=(process.env.APP_ORIGIN||'http://localhost:3001')+(job.audience==='staff'?'/#admin':'/#visit='+a.id+'&key='+viewToken(a.id)),payload={...job.payload,parameters:[...(job.payload.parameters||[]),link],manageUrl:link,text:job.payload.text+'\n'+link};let response,providerId;
+   const current=job.kind==='owner_new'?notificationJobs(a,site,{...master,whatsapp:master?.whatsapp_phone,whatsappOptIn:master?.whatsapp_opt_in},'created',Date.now(),zone).find(n=>n.kind==='owner_new')||job.payload:job.payload;
+   const link=(process.env.APP_ORIGIN||'http://localhost:3001')+(job.audience==='client'?'/#visit='+a.id+'&key='+viewToken(a.id):'/#admin'),payload={...current,parameters:[...(current.parameters||[]),link],manageUrl:link,text:current.text+'\n'+link};let response,providerId;
    await pool.query('UPDATE notifications SET attempts=attempts+1 WHERE id=$1',[job.id]);
    if(process.env.WHATSAPP_WEBHOOK_URL){response=await fetch(process.env.WHATSAPP_WEBHOOK_URL,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(process.env.WHATSAPP_WEBHOOK_TOKEN||''),'Idempotency-Key':job.id},body:JSON.stringify({id:job.id,to:job.recipient,kind:job.kind,audience:job.audience,template:process.env[templateEnv[job.kind]]||job.kind,language:process.env.WHATSAPP_LANGUAGE||'ru',...payload}),signal:AbortSignal.timeout(12000)});}
    else{response=await fetch(`https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+process.env.WHATSAPP_ACCESS_TOKEN},body:JSON.stringify({messaging_product:'whatsapp',to:job.recipient,type:'template',template:{name:process.env[templateEnv[job.kind]],language:{code:process.env.WHATSAPP_LANGUAGE||'ru'},components:[{type:'body',parameters:payload.parameters.map(text=>({type:'text',text}))}]}}),signal:AbortSignal.timeout(12000)});if(response.ok)providerId=(await response.json()).messages?.[0]?.id;}
