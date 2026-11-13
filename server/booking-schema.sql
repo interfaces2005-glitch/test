@@ -38,6 +38,13 @@ DO $$ BEGIN
  END IF;
 END $$;
 DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM app_migrations WHERE key='studio-address-105-3-v1') THEN
+  UPDATE site_content SET revision=revision+1,updated_at=now(),content=jsonb_set(jsonb_set(content,'{address}','"ул. Исанова, 105/3"'::jsonb),'{addressNote}',to_jsonb(CASE WHEN content->>'addressNote'='Ориентировочный адрес · расположение уточняется' THEN '' ELSE COALESCE(content->>'addressNote','') END)) WHERE content->>'address'='ул. Исанова, 172';
+  UPDATE notifications SET payload=replace(payload::text,'ул. Исанова, 172','ул. Исанова, 105/3')::jsonb WHERE sent_at IS NULL AND payload::text LIKE '%ул. Исанова, 172%' AND EXISTS(SELECT 1 FROM site_content WHERE content->>'address'='ул. Исанова, 105/3');
+  INSERT INTO app_migrations VALUES('studio-address-105-3-v1');
+ END IF;
+END $$;
+DO $$ BEGIN
  IF NOT EXISTS(SELECT 1 FROM app_migrations WHERE key='studio-owner-whatsapp-v1') THEN
   UPDATE site_content SET revision=revision+1,updated_at=now(),content=jsonb_set(content,'{booking}',COALESCE(content->'booking','{}'::jsonb)||'{"ownerWhatsapp":"+996 (999) 019-454","whatsappOwnerEnabled":true}'::jsonb) WHERE NOT(COALESCE(content->'booking','{}'::jsonb)?'ownerWhatsapp');
   INSERT INTO app_migrations VALUES('studio-owner-whatsapp-v1');
