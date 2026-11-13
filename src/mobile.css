@@ -10,3 +10,5 @@
 
 .hero-photo[src$="hero-madina-reference.svg"]{filter:none}
 @media(min-width:801px){.public-site .hero-visual:has(>.hero-photo[src$="hero-madina-reference.svg"]){aspect-ratio:220/425;width:auto;max-width:100%;justify-self:center;padding:0}}
+
+.public-site .portfolio-item,.public-site .portfolio-item.p1,.public-site .portfolio-item.p3{height:auto;aspect-ratio:1/1.04;border-radius:16px}.public-site .portfolio-item span{font-weight:400}.public-site .portfolio-item span svg{width:17px;height:17px;stroke-width:1.6}.public-site .portfolio-item img[src*="portfolio-reference-"]{filter:none}@media(min-width:1001px){.public-site .portfolio-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}@media(max-width:800px){.public-site .portfolio-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.public-site .portfolio-item span{font-size:9px;padding:27px 11px 12px}.public-site .portfolio-tabs button{min-height:42px;border-radius:12px}}

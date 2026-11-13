@@ -53,11 +53,12 @@ DO $$ BEGIN
  END IF;
 END $$;
 DO $$ DECLARE photo jsonb; BEGIN
- IF NOT EXISTS(SELECT 1 FROM app_migrations WHERE key='studio-portfolio-20261113-v1') THEN
-  FOR photo IN SELECT value FROM jsonb_array_elements('[{"id":"madinlashes-20261113-01","image":"/images/work-20261113-01.jpg","title":"Работа MADINLASHES · 01","category":"extensions","visible":true},{"id":"madinlashes-20261113-02","image":"/images/work-20261113-02.jpg","title":"Работа MADINLASHES · 02","category":"extensions","visible":true},{"id":"madinlashes-20261113-03","image":"/images/work-20261113-03.jpg","title":"Работа MADINLASHES · 03","category":"extensions","visible":true}]'::jsonb) LOOP
+ IF NOT EXISTS(SELECT 1 FROM app_migrations WHERE key='studio-portfolio-20261113-v2') THEN
+  FOR photo IN SELECT value FROM jsonb_array_elements('[{"id":"madinlashes-20261113-01","image":"/images/portfolio-reference-01.svg","title":"Наращивание","category":"extensions","visible":true},{"id":"madinlashes-20261113-02","image":"/images/portfolio-reference-02.svg","title":"Наращивание","category":"extensions","visible":true},{"id":"madinlashes-20261113-03","image":"/images/work-20261113-03.jpg","title":"Наращивание","category":"extensions","visible":true},{"id":"madinlashes-20261113-04","image":"/images/portfolio-reference-04.svg","title":"Наращивание","category":"extensions","visible":true}]'::jsonb) LOOP
+   UPDATE site_content AS s SET revision=revision+1,updated_at=now(),content=jsonb_set(s.content,'{portfolio}',(SELECT jsonb_agg(CASE WHEN entry->>'id'=photo->>'id' THEN entry||jsonb_build_object('image',CASE WHEN entry->>'image'='/images/work-20261113-'||right(photo->>'id',2)||'.jpg' THEN photo->>'image' ELSE entry->>'image' END,'title',CASE WHEN entry->>'title' LIKE 'Работа MADINLASHES ·%' THEN photo->>'title' ELSE entry->>'title' END) ELSE entry END ORDER BY ord) FROM jsonb_array_elements(COALESCE(s.content->'portfolio','[]'::jsonb)) WITH ORDINALITY AS items(entry,ord))) WHERE EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(s.content->'portfolio','[]'::jsonb)) AS existing WHERE existing->>'id'=photo->>'id' AND (existing->>'title' LIKE 'Работа MADINLASHES ·%' OR existing->>'image'='/images/work-20261113-'||right(photo->>'id',2)||'.jpg' AND existing->>'image'<>photo->>'image'));
    UPDATE site_content SET revision=revision+1,updated_at=now(),content=jsonb_set(content,'{portfolio}',COALESCE(content->'portfolio','[]'::jsonb)||jsonb_build_array(photo)) WHERE jsonb_array_length(COALESCE(content->'portfolio','[]'::jsonb))<24 AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(content->'portfolio','[]'::jsonb)) AS existing WHERE existing->>'id'=photo->>'id' OR existing->>'image'=photo->>'image');
   END LOOP;
-  INSERT INTO app_migrations VALUES('studio-portfolio-20261113-v1');
+  INSERT INTO app_migrations VALUES('studio-portfolio-20261113-v2');
  END IF;
 END $$;
 DO $$ BEGIN

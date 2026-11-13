@@ -1,9 +1,10 @@
 import {bookingDefaults} from './booking.mjs';
 import {isValidKgPhone} from './contact.mjs';
 export const studioPortfolio=[
- {id:'madinlashes-20261113-01',image:'/images/work-20261113-01.jpg',title:'Работа MADINLASHES · 01',category:'extensions',visible:true},
- {id:'madinlashes-20261113-02',image:'/images/work-20261113-02.jpg',title:'Работа MADINLASHES · 02',category:'extensions',visible:true},
- {id:'madinlashes-20261113-03',image:'/images/work-20261113-03.jpg',title:'Работа MADINLASHES · 03',category:'extensions',visible:true}
+ {id:'madinlashes-20261113-01',image:'/images/portfolio-reference-01.svg',title:'Наращивание',category:'extensions',visible:true},
+ {id:'madinlashes-20261113-02',image:'/images/portfolio-reference-02.svg',title:'Наращивание',category:'extensions',visible:true},
+ {id:'madinlashes-20261113-03',image:'/images/work-20261113-03.jpg',title:'Наращивание',category:'extensions',visible:true},
+ {id:'madinlashes-20261113-04',image:'/images/portfolio-reference-04.svg',title:'Наращивание',category:'extensions',visible:true}
 ];
 export const defaultSite={
  brand:'MADINLASHES',tagline:'LASH STUDIO',city:'Бишкек',address:'ул. Исанова, 105/3',addressNote:'',hours:'Ежедневно, 09:00–20:00',phone:'',instagram:'',telegram:'',booking:{...bookingDefaults,ownerWhatsapp:'+996 (999) 019-454',whatsappOwnerEnabled:true,qrImage:'/images/payment-qr.jpg',recipient:'Мадина К. · +996 (999) 019-454',paymentNote:'Сохраните QR и откройте его из галереи в банковском приложении. Проверьте получателя: Мадина К. Переведите предоплату и загрузите чек ниже. Мастер подтвердит запись после проверки поступления.'},
@@ -17,7 +18,7 @@ export const defaultSite={
 export const categoryLabels={extensions:'Наращивание',lamination:'Ламинирование'};
 const error=message=>{throw Object.assign(new Error(message),{status:400});};
 const text=(v,max=500)=>{if(typeof v!=='string'||v.length>max)error('Проверьте длину и формат текста');return v.trim();};
-export function validImage(src){return typeof src==='string'&&(src===''||/^\/images\/[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/i.test(src)||/^\/images\/(master-(madina|mia)|hero-madina)-reference\.svg$/.test(src)||/^\/api\/media\/[0-9a-f-]{36}$/i.test(src)||/^local-media:[0-9a-f-]{36}$/i.test(src));}
+export function validImage(src){return typeof src==='string'&&(src===''||/^\/images\/[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/i.test(src)||/^\/images\/(master-(madina|mia)|hero-madina)-reference\.svg$/.test(src)||/^\/images\/portfolio-reference-0[124]\.svg$/.test(src)||/^\/api\/media\/[0-9a-f-]{36}$/i.test(src)||/^local-media:[0-9a-f-]{36}$/i.test(src));}
 export function normalizeSite(value){
  if(!value||typeof value!=='object'||Array.isArray(value))error('Некорректные настройки сайта');
  const out={};for(const key of ['brand','tagline','city','address','addressNote','hours','phone','instagram','telegram'])out[key]=text(value[key],key==='brand'?40:300);
