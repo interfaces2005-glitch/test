@@ -8,7 +8,7 @@ test('slots fit full duration, exclude overlaps and allow adjacent appointments'
  assert.deepEqual(generateSlots({start:600,end:660,duration:90}),[]);
 });
 test('combined services sum prices and durations and restrict staff',()=>{
- const total=totalFor([1,3]);assert.equal(total.price,5200);assert.equal(total.duration,180);assert.deepEqual(compatibleStaff([1,3]).map(s=>s.id),[1,3]);assert.throws(()=>totalFor([1,1]));assert.throws(()=>totalFor([999]));
+ const total=totalFor([1,3]);assert.equal(total.price,4200);assert.equal(total.duration,180);assert.deepEqual(compatibleStaff([1,3]).map(s=>s.id),[1,3]);assert.throws(()=>totalFor([1,1]));assert.throws(()=>totalFor([999]));
 });
 test('breaks and bookings remove every overlapping start, cancellation restores it',()=>{
  const a={staffId:1,start:600,end:720,status:'confirmed'};

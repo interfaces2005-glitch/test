@@ -1,6 +1,6 @@
 export const services = [
- {id:1,title:'Классическое наращивание',category:'extensions',duration:120,price:2800,description:'Естественный объём, который подчёркивает ваш взгляд.',tag:'Естественная красота',image:'/images/beauty.jpg'},
- {id:2,title:'Объёмное наращивание 2D–3D',category:'extensions',duration:150,price:3500,description:'Выразительный взгляд и невесомый объём.',tag:'Выбор гостей',image:'/images/beauty.jpg'},
+ {id:1,title:'Классическое наращивание',category:'extensions',duration:120,price:1800,description:'Естественный объём, который подчёркивает ваш взгляд.',tag:'Естественная красота',image:'/images/beauty.jpg'},
+ {id:2,title:'Объёмное наращивание 2D–3D',category:'extensions',duration:150,price:2000,description:'Выразительный взгляд и невесомый объём.',tag:'Выбор гостей',image:'/images/beauty.jpg'},
  {id:3,title:'Ламинирование ресниц',category:'lamination',duration:60,price:2400,description:'Красивый изгиб и бережный уход за своими ресницами.',tag:'Без наращивания',image:'/images/beauty.jpg'}
 ];
 export const staff = [
