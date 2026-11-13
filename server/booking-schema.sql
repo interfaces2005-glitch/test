@@ -38,6 +38,12 @@ DO $$ BEGIN
  END IF;
 END $$;
 DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM app_migrations WHERE key='studio-hero-madina-20261113-v1') THEN
+  UPDATE site_content SET revision=revision+1,updated_at=now(),content=jsonb_set(content,'{hero,image}','"/images/hero-madina-reference.svg"'::jsonb) WHERE content#>>'{hero,image}' IN ('/images/beauty.jpg','/images/hero.jpg');
+  INSERT INTO app_migrations VALUES('studio-hero-madina-20261113-v1');
+ END IF;
+END $$;
+DO $$ BEGIN
  IF NOT EXISTS(SELECT 1 FROM app_migrations WHERE key='studio-team-20261113-v1') THEN
   UPDATE staff SET name='Мадина' WHERE id=1 AND name IN ('Анна','Мадина');
   UPDATE staff SET name='Мия' WHERE id=2 AND name IN ('Мария','Мия демо','Мия');
