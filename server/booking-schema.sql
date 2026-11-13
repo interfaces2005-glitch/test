@@ -38,6 +38,23 @@ DO $$ BEGIN
  END IF;
 END $$;
 DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM app_migrations WHERE key='studio-team-20261113-v1') THEN
+  UPDATE staff SET name='Мадина' WHERE id=1 AND name IN ('Анна','Мадина');
+  UPDATE staff SET name='Мия' WHERE id=2 AND name IN ('Мария','Мия демо','Мия');
+  UPDATE staff SET image='/images/master-madina-reference.svg' WHERE id=1 AND image='/images/anna.jpg';
+  UPDATE staff SET image='/images/master-mia-reference.svg' WHERE id=2 AND image='/images/maria.jpg';
+  INSERT INTO app_migrations VALUES('studio-team-20261113-v1');
+ END IF;
+END $$;
+DO $$ DECLARE photo jsonb; BEGIN
+ IF NOT EXISTS(SELECT 1 FROM app_migrations WHERE key='studio-portfolio-20261113-v1') THEN
+  FOR photo IN SELECT value FROM jsonb_array_elements('[{"id":"madinlashes-20261113-01","image":"/images/work-20261113-01.jpg","title":"Работа MADINLASHES · 01","category":"extensions","visible":true},{"id":"madinlashes-20261113-02","image":"/images/work-20261113-02.jpg","title":"Работа MADINLASHES · 02","category":"extensions","visible":true},{"id":"madinlashes-20261113-03","image":"/images/work-20261113-03.jpg","title":"Работа MADINLASHES · 03","category":"extensions","visible":true}]'::jsonb) LOOP
+   UPDATE site_content SET revision=revision+1,updated_at=now(),content=jsonb_set(content,'{portfolio}',COALESCE(content->'portfolio','[]'::jsonb)||jsonb_build_array(photo)) WHERE jsonb_array_length(COALESCE(content->'portfolio','[]'::jsonb))<24 AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(content->'portfolio','[]'::jsonb)) AS existing WHERE existing->>'id'=photo->>'id' OR existing->>'image'=photo->>'image');
+  END LOOP;
+  INSERT INTO app_migrations VALUES('studio-portfolio-20261113-v1');
+ END IF;
+END $$;
+DO $$ BEGIN
  IF NOT EXISTS(SELECT 1 FROM app_migrations WHERE key='studio-address-105-3-v1') THEN
   UPDATE site_content SET revision=revision+1,updated_at=now(),content=jsonb_set(jsonb_set(content,'{address}','"ул. Исанова, 105/3"'::jsonb),'{addressNote}',to_jsonb(CASE WHEN content->>'addressNote'='Ориентировочный адрес · расположение уточняется' THEN '' ELSE COALESCE(content->>'addressNote','') END)) WHERE content->>'address'='ул. Исанова, 172';
   UPDATE notifications SET payload=replace(payload::text,'ул. Исанова, 172','ул. Исанова, 105/3')::jsonb WHERE sent_at IS NULL AND payload::text LIKE '%ул. Исанова, 172%' AND EXISTS(SELECT 1 FROM site_content WHERE content->>'address'='ул. Исанова, 105/3');

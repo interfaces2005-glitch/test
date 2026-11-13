@@ -2,7 +2,7 @@ import {services,staff,today,dateKey,generateSlots,totalFor,compatibleStaff} fro
 import {isValidKgPhone,STUDIO_TIMEZONE} from '../shared/contact.mjs';
 import {localNow} from '../server/domain.mjs';
 import {validateSchedule} from '../server/domain.mjs';
-import {defaultSite,normalizeSite,validateService,categoryLabels,validImage} from '../shared/site-content.mjs';
+import {defaultSite,studioPortfolio,normalizeSite,validateService,categoryLabels,validImage} from '../shared/site-content.mjs';
 import {storeLocalImage} from './media';
 import {accessState} from './state-store';
 import {hydrateBooking,expirePayments,depositQuote,phoneKey,paymentPending,registerClient,addDemoNotifications} from '../shared/booking.mjs';
@@ -24,6 +24,8 @@ function hydrate(value){
  if(!data.paymentDetailsVersion){if(!data.site.booking?.qrImage&&!data.site.booking?.recipient){data.site.booking={...data.site.booking,qrImage:defaultSite.booking.qrImage,recipient:defaultSite.booking.recipient,paymentNote:defaultSite.booking.paymentNote};data.siteRevision++;}data.paymentDetailsVersion=1;}
  if(!data.ownerNotificationVersion){if(!Object.hasOwn(data.site.booking||{},'ownerWhatsapp')){data.site.booking={...data.site.booking,ownerWhatsapp:defaultSite.booking.ownerWhatsapp,whatsappOwnerEnabled:defaultSite.booking.whatsappOwnerEnabled};data.siteRevision++;}data.ownerNotificationVersion=1;}
  if(!data.studioAddressVersion){const previous='ул. Исанова, 172';if(data.site.address===previous){data.site.address=defaultSite.address;if(data.site.addressNote==='Ориентировочный адрес · расположение уточняется')data.site.addressNote='';data.siteRevision++;}if(data.site.address===defaultSite.address)data.notifications=(data.notifications||[]).map(n=>n.state==='demo'?{...n,text:n.text?.replaceAll(previous,defaultSite.address),parameters:n.parameters?.map(p=>typeof p==='string'?p.replaceAll(previous,defaultSite.address):p)}:n);data.studioAddressVersion=1;}
+ if(!data.studioPortfolioVersion){data.site.portfolio??=[];const added=studioPortfolio.filter(p=>!data.site.portfolio.some(existing=>existing.id===p.id||existing.image===p.image)).slice(0,Math.max(0,24-data.site.portfolio.length));if(added.length){data.site.portfolio.push(...structuredClone(added));data.siteRevision++;}data.studioPortfolioVersion=1;}
+ if(!data.studioTeamVersion){for(const m of data.staff){if(m.id===1){if(['Анна','Мадина'].includes(m.name))m.name='Мадина';if(m.image==='/images/anna.jpg')m.image='/images/master-madina-reference.svg';}if(m.id===2){if(['Мария','Мия демо','Мия'].includes(m.name))m.name='Мия';if(m.image==='/images/maria.jpg')m.image='/images/master-mia-reference.svg';}}data.studioTeamVersion=1;}
  return expirePayments(hydrateBooking(data));
 }
 function publicData(d){return {services:d.services.filter(s=>s.is_active!==false&&categoryLabels[s.category]),staff:d.staff.filter(s=>s.is_active!==false).map(({whatsapp,whatsappOptIn,...s})=>s),site:d.site,siteRevision:d.siteRevision,timezone:STUDIO_TIMEZONE};}

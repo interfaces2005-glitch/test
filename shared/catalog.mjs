@@ -4,8 +4,8 @@ export const services = [
  {id:3,title:'Ламинирование ресниц',category:'lamination',duration:60,price:2400,description:'Красивый изгиб и бережный уход за своими ресницами.',tag:'Без наращивания',image:'/images/beauty.jpg'}
 ];
 export const staff = [
- {id:1,name:'Анна',role:'Мастер по ресницам',serviceIds:[1,2,3],image:'/images/anna.jpg'},
- {id:2,name:'Мария',role:'Мастер ламинирования',serviceIds:[3],image:'/images/maria.jpg'},
+ {id:1,name:'Мадина',role:'Мастер по ресницам',serviceIds:[1,2,3],image:'/images/master-madina-reference.svg'},
+ {id:2,name:'Мия',role:'Мастер ламинирования',serviceIds:[3],image:'/images/master-mia-reference.svg'},
  {id:3,name:'Алина',role:'Мастер по ресницам',serviceIds:[1,2,3],image:'/images/alina.jpg'}
 ];
 export const money = n => new Intl.NumberFormat('ru-RU').format(n)+' сом';

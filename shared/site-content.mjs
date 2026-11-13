@@ -1,18 +1,23 @@
 import {bookingDefaults} from './booking.mjs';
 import {isValidKgPhone} from './contact.mjs';
+export const studioPortfolio=[
+ {id:'madinlashes-20261113-01',image:'/images/work-20261113-01.jpg',title:'Работа MADINLASHES · 01',category:'extensions',visible:true},
+ {id:'madinlashes-20261113-02',image:'/images/work-20261113-02.jpg',title:'Работа MADINLASHES · 02',category:'extensions',visible:true},
+ {id:'madinlashes-20261113-03',image:'/images/work-20261113-03.jpg',title:'Работа MADINLASHES · 03',category:'extensions',visible:true}
+];
 export const defaultSite={
  brand:'MADINLASHES',tagline:'LASH STUDIO',city:'Бишкек',address:'ул. Исанова, 105/3',addressNote:'',hours:'Ежедневно, 09:00–20:00',phone:'',instagram:'',telegram:'',booking:{...bookingDefaults,ownerWhatsapp:'+996 (999) 019-454',whatsappOwnerEnabled:true,qrImage:'/images/payment-qr.jpg',recipient:'Мадина К. · +996 (999) 019-454',paymentNote:'Сохраните QR и откройте его из галереи в банковском приложении. Проверьте получателя: Мадина К. Переведите предоплату и загрузите чек ниже. Мастер подтвердит запись после проверки поступления.'},
  hero:{eyebrow:'МАЛЕНЬКИЕ РИТУАЛЫ. БОЛЬШЕ ЛЮБВИ К СЕБЕ.',title:'Красота,',accent:'в вашем взгляде.',description:'Невесомое наращивание. Бережное ламинирование.\nИ время, которое принадлежит только вам.',button:'Выбрать дату и записаться',image:'/images/beauty.jpg',note:'Бережно к вашей красоте.\nС вниманием к каждой детали.'},
  texts:{servicesEyebrow:'МЕНЮ КРАСОТЫ',servicesTitle:'Ваш взгляд —',servicesAccent:'ваши правила.',servicesDescription:'От естественного изгиба до выразительного объёма. Подберём то, что подходит вам.',staffEyebrow:'В ЗАБОТЛИВЫХ РУКАХ',staffTitle:'Знакомьтесь,',staffAccent:'ваши мастера',portfolioEyebrow:'НАШИ РАБОТЫ',portfolioTitle:'Красота',portfolioAccent:'в каждом взгляде.',portfolioDescription:'Наращивание и ламинирование ресниц в MADINLASHES.',portfolioEmpty:'Здесь скоро появятся фотографии наших работ.',bookingEyebrow:'ОНЛАЙН-ЗАПИСЬ',bookingTitle:'В вашем ритме.',bookingAccent:'В удобное время.',bookingDescription:'Выберите услугу, мастера и свободное окошко в одном удобном окне.',faqEyebrow:'ДО ВСТРЕЧИ В СТУДИИ',faqTitle:'Вы спрашивали —',faqAccent:'мы отвечаем.',contactsEyebrow:'ЖДЁМ ВАС В ГОСТИ',contactsTitle:'Ваше место',contactsAccent:'красивого взгляда.',contactsDescription:'Уютная студия, любимая музыка и немного времени только для вас.',footer:'С любовью к вашей естественной красоте.'},
  theme:{accent:'#9c6457',background:'#faf8f5',ink:'#383b36',font:'serif'},
  visible:{staff:true,portfolio:true,faq:true},
- portfolio:[],legal:{operator:'',privacy:'',cancellation:''},
+ portfolio:studioPortfolio,legal:{operator:'',privacy:'',cancellation:''},
  faq:[{id:'faq-1',question:'Как выбрать между наращиванием и ламинированием?',answer:'Наращивание позволяет изменить длину и объём. Ламинирование подчёркивает изгиб собственных ресниц. Напишите свои пожелания в комментарии к записи — обсудим их перед процедурой.'},{id:'faq-2',question:'Как подготовиться к визиту?',answer:'Удобнее прийти без макияжа глаз за 5–10 минут до начала. Индивидуальные рекомендации уточняйте у мастера.'},{id:'faq-3',question:'Как отменить запись?',answer:'В демонстрации отмена доступна на экране подтверждения. Правила отмены студии уточняются перед запуском.'}]
 };
 export const categoryLabels={extensions:'Наращивание',lamination:'Ламинирование'};
 const error=message=>{throw Object.assign(new Error(message),{status:400});};
 const text=(v,max=500)=>{if(typeof v!=='string'||v.length>max)error('Проверьте длину и формат текста');return v.trim();};
-export function validImage(src){return typeof src==='string'&&(src===''||/^\/images\/[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/i.test(src)||/^\/api\/media\/[0-9a-f-]{36}$/i.test(src)||/^local-media:[0-9a-f-]{36}$/i.test(src));}
+export function validImage(src){return typeof src==='string'&&(src===''||/^\/images\/[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/i.test(src)||/^\/images\/master-(madina|mia)-reference\.svg$/.test(src)||/^\/api\/media\/[0-9a-f-]{36}$/i.test(src)||/^local-media:[0-9a-f-]{36}$/i.test(src));}
 export function normalizeSite(value){
  if(!value||typeof value!=='object'||Array.isArray(value))error('Некорректные настройки сайта');
  const out={};for(const key of ['brand','tagline','city','address','addressNote','hours','phone','instagram','telegram'])out[key]=text(value[key],key==='brand'?40:300);
